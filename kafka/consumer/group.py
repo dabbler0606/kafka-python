@@ -56,6 +56,15 @@ class KafkaConsumer(six.Iterator):
             committing offsets. If None, auto-partition assignment (via
             group coordinator) and offset commits are disabled.
             Default: None
+        group_instance_id (str or None): A unique identifier of the consumer
+            instance provided by the end user. Only non-empty strings are
+            permitted. If set, the consumer is treated as a static member,
+            which means that only one instance with this ID is allowed in
+            the consumer group at any time. This can be used in combination
+            with a larger session timeout to avoid group rebalances caused
+            by transient unavailability (e.g. process restarts). If not set,
+            the consumer will join the group as a dynamic member, which is
+            the traditional behavior. Supported Kafka version >= 2.3.0
         key_deserializer (callable): Any callable that takes a
             raw message key and returns a deserialized key.
         value_deserializer (callable): Any callable that takes a
@@ -254,6 +263,7 @@ class KafkaConsumer(six.Iterator):
         'bootstrap_servers': 'localhost',
         'client_id': 'kafka-python-' + __version__,
         'group_id': None,
+        'group_instance_id': None,
         'key_deserializer': None,
         'value_deserializer': None,
         'fetch_max_wait_ms': 500,
@@ -310,6 +320,7 @@ class KafkaConsumer(six.Iterator):
         'kafka_client': KafkaClient,
     }
     DEFAULT_SESSION_TIMEOUT_MS_0_9 = 30000
+    DEFAULT_SESSION_TIMEOUT_MS_2_3 = 1800000
 
     def __init__(self, *topics, **configs):
         # Only check for extra config keys in top-level class
@@ -373,6 +384,10 @@ class KafkaConsumer(six.Iterator):
                     self.config['session_timeout_ms'] = self.DEFAULT_SESSION_TIMEOUT_MS_0_9
             if 'max_poll_interval_ms' not in configs:
                 self.config['max_poll_interval_ms'] = self.config['session_timeout_ms']
+
+        elif self.config['api_version'] > (2, 3, 0):
+            if 'session_timeout_ms' not in configs:
+                self.config['session_timeout_ms'] = self.DEFAULT_SESSION_TIMEOUT_MS_2_3
 
         if self.config['group_id'] is not None:
             if self.config['request_timeout_ms'] <= self.config['session_timeout_ms']:

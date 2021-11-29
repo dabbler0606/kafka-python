@@ -16,7 +16,7 @@ from kafka.metrics import AnonMeasurable
 from kafka.metrics.stats import Avg, Count, Max, Rate
 from kafka.protocol.commit import GroupCoordinatorRequest, OffsetCommitRequest
 from kafka.protocol.group import (HeartbeatRequest, JoinGroupRequest,
-                            LeaveGroupRequest, SyncGroupRequest)
+                                  LeaveGroupRequest, SyncGroupRequest)
 
 log = logging.getLogger('kafka.coordinator')
 
@@ -32,6 +32,7 @@ class Generation(object):
         self.generation_id = generation_id
         self.member_id = member_id
         self.protocol = protocol
+
 
 Generation.NO_GENERATION = Generation(
     OffsetCommitRequest[2].DEFAULT_GENERATION_ID,
@@ -82,6 +83,7 @@ class BaseCoordinator(object):
 
     DEFAULT_CONFIG = {
         'group_id': 'kafka-python-default-group',
+        'group_instance_id': None,
         'session_timeout_ms': 10000,
         'heartbeat_interval_ms': 3000,
         'max_poll_interval_ms': 300000,
@@ -123,6 +125,7 @@ class BaseCoordinator(object):
 
         self._client = client
         self.group_id = self.config['group_id']
+        self.group_instance_id = self.config['group_instance_id']
         self.heartbeat = Heartbeat(**self.config)
         self._heartbeat_thread = None
         self._lock = threading.Condition()
@@ -552,6 +555,11 @@ class BaseCoordinator(object):
             log.error("Attempt to join group %s failed due to fatal error: %s",
                       self.group_id, error)
             future.failure(error)
+        elif error_type is Errors.FencedInstanceIdError:
+            error = error_type(response)
+            log.error("Received fatal exception: group.instance.id %s gets fenced"
+                      "error: %s", self.group_instance_id, error)
+            future.failure(error)
         elif error_type is Errors.GroupAuthorizationFailedError:
             future.failure(error_type(self.group_id))
         else:
@@ -765,8 +773,9 @@ class BaseCoordinator(object):
         """Leave the current group and reset local generation/memberId."""
         with self._client._lock, self._lock:
             if (not self.coordinator_unknown()
-                and self.state is not MemberState.UNJOINED
-                and self._generation is not Generation.NO_GENERATION):
+                    and self.state is not MemberState.UNJOINED
+                    and self._generation is not Generation.NO_GENERATION
+                    and not self.group_instance_id):
 
                 # this is a minimal effort attempt to leave the group. we do not
                 # attempt any resending if the request fails or times out.
@@ -803,7 +812,8 @@ class BaseCoordinator(object):
         request = HeartbeatRequest[version](self.group_id,
                                             self._generation.generation_id,
                                             self._generation.member_id)
-        log.debug("Heartbeat: %s[%s] %s", request.group, request.generation_id, request.member_id)  # pylint: disable-msg=no-member
+        log.debug("Heartbeat: %s[%s] %s", request.group, request.generation_id,
+                  request.member_id)  # pylint: disable-msg=no-member
         future = Future()
         _f = self._client.send(self.coordinator_id, request)
         _f.add_callback(self._handle_heartbeat_response, future, time.time())
@@ -898,7 +908,7 @@ class GroupCoordinatorMetrics(object):
             'last-heartbeat-seconds-ago', self.metric_group_name,
             'The number of seconds since the last controller heartbeat was sent',
             tags), AnonMeasurable(
-                lambda _, now: (now / 1000) - self.heartbeat.last_send))
+            lambda _, now: (now / 1000) - self.heartbeat.last_send))
 
 
 class HeartbeatThread(threading.Thread):

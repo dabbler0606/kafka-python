@@ -461,6 +461,14 @@ class GroupIdNotFoundError(BrokerResponseError):
     description = 'The group id does not exist.'
 
 
+class FencedInstanceIdError(BrokerResponseError):
+    errno = 82
+    message = 'FENCED_INSTANCE_ID'
+    description = ('The broker rejected this static consumer since another'
+                   'consumer with the same group.instance.id has registered'
+                   'with a different member.id.')
+
+
 class KafkaUnavailableError(KafkaError):
     pass
 
